@@ -247,18 +247,18 @@ export class TelemetryEngine {
       }
 
       case FlightStateCode.PARAFOIL_DEPLOYMENT: {
-        // 7.0s disreefing at <= 700m AGL with burnwire MOSFET active
+        // 7.0s disreefing at <= 700m AGL with burnwire MOSFET active and reaction flywheel spinning
         altitude = 695.0 + noise() * 1.0;
         velocity = 8.5 + noise() * 0.4;
         accelZ = 1.6 + noise() * 0.25;
         accelX = noise() * 0.25;
         accelY = noise() * 0.25;
-        wheelRpm = 0;
+        wheelRpm = 6000.0 + noise() * 30.0;
         spinRate = 2.0 + noise() * 0.2;
         roll = 4.0 + noise() * 1.2;
         pitch = -2.5 + noise() * 1.0;
         yaw = ((t * 4.0) % 360) - 180;
-        currentDraw = 1.85;
+        currentDraw = 2.65; // Burnwire + Flywheel BLDC
         break;
       }
 

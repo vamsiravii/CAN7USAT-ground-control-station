@@ -218,13 +218,13 @@ export const SerialLinkPanel: React.FC<SerialLinkPanelProps> = ({
         </>
       ) : (
         <>
-          {/* Live Hardware Port & Receive-Only Notice */}
+          {/* Live Hardware Port & Bidirectional Notice */}
           <div className="flex items-center justify-between px-2 py-1 bg-[var(--bg-base)] border border-[var(--border-muted)] rounded-[var(--radius-xs)] font-mono-data text-[9px] text-[var(--text-secondary)]">
             <span className="flex items-center gap-1 text-[var(--text-primary)] truncate">
               <Usb className="w-3 h-3 text-[var(--action-amber)] shrink-0" />
               <span className="truncate">{serialMetrics.portLabel ?? 'NO USB PORT OPEN'}</span>
             </span>
-            <span className="text-[var(--text-tertiary)] shrink-0 ml-1">RX ONLY (NO TX)</span>
+            <span className="text-[var(--status-nominal)] font-semibold shrink-0 ml-1">BIDIRECTIONAL (RX/TX)</span>
           </div>
 
           {/* Connect / Disconnect & Baud Rate Controls */}
@@ -348,11 +348,17 @@ export const SerialLinkPanel: React.FC<SerialLinkPanelProps> = ({
           </div>
 
           {/* Live Serial Telemetry Counters */}
-          <div className="grid grid-cols-4 gap-1 px-2 py-1 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[9px] font-mono-data">
+          <div className="grid grid-cols-5 gap-1 px-2 py-1 bg-[var(--bg-base)] border border-[var(--border-subtle)] rounded-[var(--radius-xs)] text-[9px] font-mono-data">
             <div title="Valid Parsed Telemetry Packets">
               <span className="text-[var(--text-tertiary)] block">VALID</span>
               <span className="text-[var(--status-nominal)] font-bold tabular-nums">
                 {serialMetrics.validPacketsReceived}
+              </span>
+            </div>
+            <div title="Telecommands Sent (Uplink)">
+              <span className="text-[var(--text-tertiary)] block">TX CMD</span>
+              <span className="text-[var(--action-amber)] font-bold tabular-nums">
+                {serialMetrics.commandsSent ?? 0}
               </span>
             </div>
             <div title="Malformed or Rejected Frames">

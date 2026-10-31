@@ -3,6 +3,18 @@ import { FlightStateCode, TelemetryPacket } from '../types';
 export const LIVE_TELEMETRY_TEAM_ID = '2026-IN-SPACe-CAN-7USAT-017';
 export const DEFAULT_MAX_LINE_LENGTH = 1024;
 
+export function isAcceptedTeamId(teamId: string): boolean {
+  const clean = teamId.trim();
+  return (
+    clean === LIVE_TELEMETRY_TEAM_ID ||
+    clean === '017' ||
+    clean === 'CAN-7USAT-017' ||
+    clean === 'CAN7USAT-017' ||
+    clean === 'TEAM_017' ||
+    clean.endsWith('-017')
+  );
+}
+
 /**
  * Exact 24-field key order serialized by `transmitLoRaTelemetry()` in
  * `flight-software-reference/CAN7USAT_FSW.ino` (lines 601-662).
@@ -505,7 +517,14 @@ export function parseTelemetryLine(
   const isKeyValueFormat = rawFields[0].includes('=');
 
   let values: string[];
-  let packetFormat: 'FSW_KV_32' | 'FSW_CSV_32' | 'FSW_KV_24' | 'FSW_CSV_24' | 'LEGACY_CSV_19';
+  let packetFormat:
+    | 'FSW_KV_32'
+    | 'FSW_CSV_32'
+    | 'FSW_KV_24'
+    | 'FSW_CSV_24'
+    | 'LEGACY_CSV_19'
+    | 'COMPETITION_CSV_15'
+    | 'EXTENDED_CSV_18';
 
   if (isKeyValueFormat) {
     let kvTokens: string[];
@@ -575,6 +594,16 @@ export function parseTelemetryLine(
         rawLine,
       };
     }
+  } else if (rawFields.length === 18 || (rawFields.length === 19 && rawFields[18].trim() === '')) {
+    packetFormat = 'EXTENDED_CSV_18';
+    values = rawFields.slice(0, 18);
+    if (values[0].trim() === 'TEAM_ID') {
+      return {
+        ok: false,
+        error: 'CSV header row ignored',
+        rawLine,
+      };
+    }
   } else if (rawFields.length === 20) {
     if (rawFields[19].trim() !== '') {
       return {
@@ -588,20 +617,30 @@ export function parseTelemetryLine(
   } else if (rawFields.length === 19) {
     packetFormat = 'LEGACY_CSV_19';
     values = rawFields;
+  } else if (rawFields.length === 15 || (rawFields.length === 16 && rawFields[15].trim() === '')) {
+    packetFormat = 'COMPETITION_CSV_15';
+    values = rawFields.slice(0, 15);
+    if (values[0].trim() === 'TEAM_ID') {
+      return {
+        ok: false,
+        error: 'CSV header row ignored',
+        rawLine,
+      };
+    }
   } else {
     return {
       ok: false,
-      error: `Invalid field count: expected 32 (FSW v2), 24 (FSW v1), or 19 (legacy) fields (plus optional trailing comma), got ${rawFields.length}`,
+      error: `Invalid field count: expected 32 (FSW v2), 24 (FSW v1), 19 (legacy), 18 (extended attitude), or 15 (competition) fields (plus optional trailing comma), got ${rawFields.length}`,
       rawLine,
     };
   }
 
   // 0: teamId
   const teamId = values[0].trim();
-  if (teamId !== LIVE_TELEMETRY_TEAM_ID) {
+  if (!isAcceptedTeamId(teamId)) {
     return {
       ok: false,
-      error: `Invalid teamId '${teamId}' (expected '${LIVE_TELEMETRY_TEAM_ID}')`,
+      error: `Invalid teamId '${teamId}' (expected '${LIVE_TELEMETRY_TEAM_ID}' or '017')`,
       rawLine,
     };
   }
@@ -650,26 +689,14 @@ export function parseTelemetryLine(
   const satsRes = parseStrictNonNegativeInt(values[11], 'gpsSats', 99);
   if (!satsRes.ok) return { ok: false, error: satsRes.error, rawLine };
 
-  // 12, 13, 14: ACCEL_X_MPS2, ACCEL_Y_MPS2, ACCEL_Z_MPS2
-  const accelXRes = parseStrictFloat(values[12], 'accelX', -500, 500);
-  if (!accelXRes.ok) return { ok: false, error: accelXRes.error, rawLine };
-
-  const accelYRes = parseStrictFloat(values[13], 'accelY', -500, 500);
-  if (!accelYRes.ok) return { ok: false, error: accelYRes.error, rawLine };
-
-  const accelZRes = parseStrictFloat(values[14], 'accelZ', -500, 500);
-  if (!accelZRes.ok) return { ok: false, error: accelZRes.error, rawLine };
-
-  // 15, 16: ROLL_DEG, PITCH_DEG (degrees)
-  const rollRes = parseStrictFloat(values[15], 'roll', -360, 360);
-  if (!rollRes.ok) return { ok: false, error: rollRes.error, rawLine };
-
-  const pitchRes = parseStrictFloat(values[16], 'pitch', -360, 360);
-  if (!pitchRes.ok) return { ok: false, error: pitchRes.error, rawLine };
-
-  // 17: GYRO_Z_RADPS / spinRate (preserved without silent rescaling)
-  const spinRateRes = parseStrictFloat(values[17], 'spinRate', -10000, 10000);
-  if (!spinRateRes.ok) return { ok: false, error: spinRateRes.error, rawLine };
+  let accelXVal: number | null = null;
+  let accelYVal: number | null = null;
+  let accelZVal: number | null = null;
+  let totalAccelVal: number | null = null;
+  let rollVal: number | null = null;
+  let pitchVal: number | null = null;
+  let yawVal: number | null = null;
+  let spinRateVal: number | null = null;
 
   let leftServoDeg: number | null = null;
   let rightServoDeg: number | null = null;
@@ -689,118 +716,175 @@ export function parseTelemetryLine(
   let actuatorFault: string | null = null;
   let fswStateRaw: string;
 
-  if (packetFormat === 'FSW_KV_32' || packetFormat === 'FSW_CSV_32') {
-    // 18: LEFT_BRAKE_CMD (0.000..1.000)
-    const leftBrakeRes = parseStrictFloat(values[18], 'leftBrakeCmd', 0, 1);
-    if (!leftBrakeRes.ok) return { ok: false, error: leftBrakeRes.error, rawLine };
-    leftBrakeCmd = leftBrakeRes.value;
+  if (packetFormat === 'COMPETITION_CSV_15' || packetFormat === 'EXTENDED_CSV_18') {
+    // 12: TOTAL_ACCEL
+    const totalAccelRes = parseStrictFloat(values[12], 'totalAccel', 0, 500);
+    if (!totalAccelRes.ok) return { ok: false, error: totalAccelRes.error, rawLine };
+    totalAccelVal = totalAccelRes.value;
 
-    // 19: RIGHT_BRAKE_CMD (0.000..1.000)
-    const rightBrakeRes = parseStrictFloat(values[19], 'rightBrakeCmd', 0, 1);
-    if (!rightBrakeRes.ok) return { ok: false, error: rightBrakeRes.error, rawLine };
-    rightBrakeCmd = rightBrakeRes.value;
+    // 13: FLYWHEEL_RPM (accept float or int, round to int)
+    const wheelRpmFloatRes = parseStrictFloat(values[13], 'flywheelRpm', 0, 100_000);
+    if (!wheelRpmFloatRes.ok) return { ok: false, error: wheelRpmFloatRes.error, rawLine };
+    wheelRpm = Math.round(wheelRpmFloatRes.value);
 
-    // Net normalized steering command [-1.0, +1.0] (right brake minus left brake)
-    derivedSteering = Number(
-      Math.max(-1, Math.min(1, rightBrakeCmd - leftBrakeCmd)).toFixed(3)
-    );
+    // 14: FLIGHT_STATE
+    fswStateRaw = values[14];
 
-    // 20: LEFT_SPOOL_DIR (STOP | WIND | RELEASE)
-    const leftDirRes = parseSpoolDirection(values[20], 'leftSpoolDir');
-    if (!leftDirRes.ok) return { ok: false, error: leftDirRes.error, rawLine };
-    leftSpoolDir = leftDirRes.value;
+    // Optional 15, 16, 17: ROLL, PITCH, YAW
+    if (packetFormat === 'EXTENDED_CSV_18') {
+      const rollRes = parseStrictFloat(values[15], 'roll', -360, 360);
+      if (!rollRes.ok) return { ok: false, error: rollRes.error, rawLine };
+      rollVal = rollRes.value;
 
-    // 21: RIGHT_SPOOL_DIR (STOP | WIND | RELEASE)
-    const rightDirRes = parseSpoolDirection(values[21], 'rightSpoolDir');
-    if (!rightDirRes.ok) return { ok: false, error: rightDirRes.error, rawLine };
-    rightSpoolDir = rightDirRes.value;
+      const pitchRes = parseStrictFloat(values[16], 'pitch', -360, 360);
+      if (!pitchRes.ok) return { ok: false, error: pitchRes.error, rawLine };
+      pitchVal = pitchRes.value;
 
-    // 22: LEFT_SERVO_US (0..3000 µs)
-    const leftUsRes = parseStrictNonNegativeInt(values[22], 'leftServoUs', 3000);
-    if (!leftUsRes.ok) return { ok: false, error: leftUsRes.error, rawLine };
-    leftServoUs = leftUsRes.value;
-
-    // 23: RIGHT_SERVO_US (0..3000 µs)
-    const rightUsRes = parseStrictNonNegativeInt(values[23], 'rightServoUs', 3000);
-    if (!rightUsRes.ok) return { ok: false, error: rightUsRes.error, rawLine };
-    rightServoUs = rightUsRes.value;
-
-    // 24: LEFT_EST_PULL_MM (float 0..500 or UNCAL -> null)
-    const leftPullRes = parseEstimatedPullMm(values[24], 'leftEstPullMm');
-    if (!leftPullRes.ok) return { ok: false, error: leftPullRes.error, rawLine };
-    leftEstPullMm = leftPullRes.value;
-
-    // 25: RIGHT_EST_PULL_MM (float 0..500 or UNCAL -> null)
-    const rightPullRes = parseEstimatedPullMm(values[25], 'rightEstPullMm');
-    if (!rightPullRes.ok) return { ok: false, error: rightPullRes.error, rawLine };
-    rightEstPullMm = rightPullRes.value;
-
-    // 26: ACTUATOR_CAL (CALIBRATED | UNCAL_LOCKED)
-    const calRes = parseActuatorCalStatus(values[26]);
-    if (!calRes.ok) return { ok: false, error: calRes.error, rawLine };
-    actuatorCalStatus = calRes.value;
-
-    // 27: ACTUATOR_FAULT (strict identifier token)
-    const faultTrimmed = values[27].trim();
-    if (!STRICT_FSW_STATE_REGEX.test(faultTrimmed)) {
-      return {
-        ok: false,
-        error: `Invalid ACTUATOR_FAULT string: '${values[27]}'`,
-        rawLine,
-      };
+      const yawRes = parseStrictFloat(values[17], 'yaw', -360, 360);
+      if (!yawRes.ok) return { ok: false, error: yawRes.error, rawLine };
+      yawVal = yawRes.value;
     }
-    actuatorFault = faultTrimmed;
-
-    // 28: BURNWIRE_MOSFET (0 | 1)
-    const burnwireRes = parseStrictBinaryFlag(values[28], 'burnwireMosfet');
-    if (!burnwireRes.ok) return { ok: false, error: burnwireRes.error, rawLine };
-    burnwireActive = burnwireRes.value;
-
-    // 29: BUZZER_MOSFET (0 | 1)
-    const buzzerRes = parseStrictBinaryFlag(values[29], 'buzzerMosfet');
-    if (!buzzerRes.ok) return { ok: false, error: buzzerRes.error, rawLine };
-    buzzerMosfet = buzzerRes.value;
-
-    // 30: FLYWHEEL_RPM (integer RPM)
-    const wheelRpmRes = parseStrictNonNegativeInt(values[30], 'flywheelRpm', 100_000);
-    if (!wheelRpmRes.ok) return { ok: false, error: wheelRpmRes.error, rawLine };
-    wheelRpm = wheelRpmRes.value;
-
-    // 31: FLIGHT_STATE
-    fswStateRaw = values[31];
-  } else if (packetFormat === 'FSW_KV_24' || packetFormat === 'FSW_CSV_24') {
-    // 18: LEFT_SERVO_DEG (0..180 deg)
-    const leftServoRes = parseStrictFloat(values[18], 'leftServoDeg', 0, 180);
-    if (!leftServoRes.ok) return { ok: false, error: leftServoRes.error, rawLine };
-    leftServoDeg = leftServoRes.value;
-
-    // 19: RIGHT_SERVO_DEG (0..180 deg)
-    const rightServoRes = parseStrictFloat(values[19], 'rightServoDeg', 0, 180);
-    if (!rightServoRes.ok) return { ok: false, error: rightServoRes.error, rawLine };
-    rightServoDeg = rightServoRes.value;
-
-    derivedSteering = deriveSteeringFromServos(leftServoDeg, rightServoDeg);
-
-    // 20: BURNWIRE_MOSFET (0 | 1)
-    const burnwireRes = parseStrictBinaryFlag(values[20], 'burnwireMosfet');
-    if (!burnwireRes.ok) return { ok: false, error: burnwireRes.error, rawLine };
-    burnwireActive = burnwireRes.value;
-
-    // 21: BUZZER_MOSFET (0 | 1)
-    const buzzerRes = parseStrictBinaryFlag(values[21], 'buzzerMosfet');
-    if (!buzzerRes.ok) return { ok: false, error: buzzerRes.error, rawLine };
-    buzzerMosfet = buzzerRes.value;
-
-    // 22: FLYWHEEL_RPM (integer RPM)
-    const wheelRpmRes = parseStrictNonNegativeInt(values[22], 'flywheelRpm', 100_000);
-    if (!wheelRpmRes.ok) return { ok: false, error: wheelRpmRes.error, rawLine };
-    wheelRpm = wheelRpmRes.value;
-
-    // 23: FLIGHT_STATE
-    fswStateRaw = values[23];
   } else {
-    // 18: flight software state (19-field legacy CSV)
-    fswStateRaw = values[18];
+    // 12, 13, 14: ACCEL_X_MPS2, ACCEL_Y_MPS2, ACCEL_Z_MPS2
+    const accelXRes = parseStrictFloat(values[12], 'accelX', -500, 500);
+    if (!accelXRes.ok) return { ok: false, error: accelXRes.error, rawLine };
+    accelXVal = accelXRes.value;
+
+    const accelYRes = parseStrictFloat(values[13], 'accelY', -500, 500);
+    if (!accelYRes.ok) return { ok: false, error: accelYRes.error, rawLine };
+    accelYVal = accelYRes.value;
+
+    const accelZRes = parseStrictFloat(values[14], 'accelZ', -500, 500);
+    if (!accelZRes.ok) return { ok: false, error: accelZRes.error, rawLine };
+    accelZVal = accelZRes.value;
+
+    // 15, 16: ROLL_DEG, PITCH_DEG (degrees)
+    const rollRes = parseStrictFloat(values[15], 'roll', -360, 360);
+    if (!rollRes.ok) return { ok: false, error: rollRes.error, rawLine };
+    rollVal = rollRes.value;
+
+    const pitchRes = parseStrictFloat(values[16], 'pitch', -360, 360);
+    if (!pitchRes.ok) return { ok: false, error: pitchRes.error, rawLine };
+    pitchVal = pitchRes.value;
+
+    // 17: GYRO_Z_RADPS / spinRate (preserved without silent rescaling)
+    const spinRateRes = parseStrictFloat(values[17], 'spinRate', -10000, 10000);
+    if (!spinRateRes.ok) return { ok: false, error: spinRateRes.error, rawLine };
+    spinRateVal = spinRateRes.value;
+
+    if (packetFormat === 'FSW_KV_32' || packetFormat === 'FSW_CSV_32') {
+      // 18: LEFT_BRAKE_CMD (0.000..1.000)
+      const leftBrakeRes = parseStrictFloat(values[18], 'leftBrakeCmd', 0, 1);
+      if (!leftBrakeRes.ok) return { ok: false, error: leftBrakeRes.error, rawLine };
+      leftBrakeCmd = leftBrakeRes.value;
+
+      // 19: RIGHT_BRAKE_CMD (0.000..1.000)
+      const rightBrakeRes = parseStrictFloat(values[19], 'rightBrakeCmd', 0, 1);
+      if (!rightBrakeRes.ok) return { ok: false, error: rightBrakeRes.error, rawLine };
+      rightBrakeCmd = rightBrakeRes.value;
+
+      // Net normalized steering command [-1.0, +1.0] (right brake minus left brake)
+      derivedSteering = Number(
+        Math.max(-1, Math.min(1, rightBrakeCmd - leftBrakeCmd)).toFixed(3)
+      );
+
+      // 20: LEFT_SPOOL_DIR (STOP | WIND | RELEASE)
+      const leftDirRes = parseSpoolDirection(values[20], 'leftSpoolDir');
+      if (!leftDirRes.ok) return { ok: false, error: leftDirRes.error, rawLine };
+      leftSpoolDir = leftDirRes.value;
+
+      // 21: RIGHT_SPOOL_DIR (STOP | WIND | RELEASE)
+      const rightDirRes = parseSpoolDirection(values[21], 'rightSpoolDir');
+      if (!rightDirRes.ok) return { ok: false, error: rightDirRes.error, rawLine };
+      rightSpoolDir = rightDirRes.value;
+
+      // 22: LEFT_SERVO_US (0..3000 µs)
+      const leftUsRes = parseStrictNonNegativeInt(values[22], 'leftServoUs', 3000);
+      if (!leftUsRes.ok) return { ok: false, error: leftUsRes.error, rawLine };
+      leftServoUs = leftUsRes.value;
+
+      // 23: RIGHT_SERVO_US (0..3000 µs)
+      const rightUsRes = parseStrictNonNegativeInt(values[23], 'rightServoUs', 3000);
+      if (!rightUsRes.ok) return { ok: false, error: rightUsRes.error, rawLine };
+      rightServoUs = rightUsRes.value;
+
+      // 24: LEFT_EST_PULL_MM (float 0..500 or UNCAL -> null)
+      const leftPullRes = parseEstimatedPullMm(values[24], 'leftEstPullMm');
+      if (!leftPullRes.ok) return { ok: false, error: leftPullRes.error, rawLine };
+      leftEstPullMm = leftPullRes.value;
+
+      // 25: RIGHT_EST_PULL_MM (float 0..500 or UNCAL -> null)
+      const rightPullRes = parseEstimatedPullMm(values[25], 'rightEstPullMm');
+      if (!rightPullRes.ok) return { ok: false, error: rightPullRes.error, rawLine };
+      rightEstPullMm = rightPullRes.value;
+
+      // 26: ACTUATOR_CAL (CALIBRATED | UNCAL_LOCKED)
+      const calRes = parseActuatorCalStatus(values[26]);
+      if (!calRes.ok) return { ok: false, error: calRes.error, rawLine };
+      actuatorCalStatus = calRes.value;
+
+      // 27: ACTUATOR_FAULT (strict identifier token)
+      const faultTrimmed = values[27].trim();
+      if (!STRICT_FSW_STATE_REGEX.test(faultTrimmed)) {
+        return {
+          ok: false,
+          error: `Invalid ACTUATOR_FAULT string: '${values[27]}'`,
+          rawLine,
+        };
+      }
+      actuatorFault = faultTrimmed;
+
+      // 28: BURNWIRE_MOSFET (0 | 1)
+      const burnwireRes = parseStrictBinaryFlag(values[28], 'burnwireMosfet');
+      if (!burnwireRes.ok) return { ok: false, error: burnwireRes.error, rawLine };
+      burnwireActive = burnwireRes.value;
+
+      // 29: BUZZER_MOSFET (0 | 1)
+      const buzzerRes = parseStrictBinaryFlag(values[29], 'buzzerMosfet');
+      if (!buzzerRes.ok) return { ok: false, error: buzzerRes.error, rawLine };
+      buzzerMosfet = buzzerRes.value;
+
+      // 30: FLYWHEEL_RPM (integer RPM)
+      const wheelRpmRes = parseStrictNonNegativeInt(values[30], 'flywheelRpm', 100_000);
+      if (!wheelRpmRes.ok) return { ok: false, error: wheelRpmRes.error, rawLine };
+      wheelRpm = wheelRpmRes.value;
+
+      // 31: FLIGHT_STATE
+      fswStateRaw = values[31];
+    } else if (packetFormat === 'FSW_KV_24' || packetFormat === 'FSW_CSV_24') {
+      // 18: LEFT_SERVO_DEG (0..180 deg)
+      const leftServoRes = parseStrictFloat(values[18], 'leftServoDeg', 0, 180);
+      if (!leftServoRes.ok) return { ok: false, error: leftServoRes.error, rawLine };
+      leftServoDeg = leftServoRes.value;
+
+      // 19: RIGHT_SERVO_DEG (0..180 deg)
+      const rightServoRes = parseStrictFloat(values[19], 'rightServoDeg', 0, 180);
+      if (!rightServoRes.ok) return { ok: false, error: rightServoRes.error, rawLine };
+      rightServoDeg = rightServoRes.value;
+
+      derivedSteering = deriveSteeringFromServos(leftServoDeg, rightServoDeg);
+
+      // 20: BURNWIRE_MOSFET (0 | 1)
+      const burnwireRes = parseStrictBinaryFlag(values[20], 'burnwireMosfet');
+      if (!burnwireRes.ok) return { ok: false, error: burnwireRes.error, rawLine };
+      burnwireActive = burnwireRes.value;
+
+      // 21: BUZZER_MOSFET (0 | 1)
+      const buzzerRes = parseStrictBinaryFlag(values[21], 'buzzerMosfet');
+      if (!buzzerRes.ok) return { ok: false, error: buzzerRes.error, rawLine };
+      buzzerMosfet = buzzerRes.value;
+
+      // 22: FLYWHEEL_RPM (integer RPM)
+      const wheelRpmRes = parseStrictNonNegativeInt(values[22], 'flywheelRpm', 100_000);
+      if (!wheelRpmRes.ok) return { ok: false, error: wheelRpmRes.error, rawLine };
+      wheelRpm = wheelRpmRes.value;
+
+      // 23: FLIGHT_STATE
+      fswStateRaw = values[23];
+    } else {
+      // 18: flight software state (19-field legacy CSV)
+      fswStateRaw = values[18];
+    }
   }
 
   const fswStateName = fswStateRaw.trim();
@@ -852,13 +936,15 @@ export function parseTelemetryLine(
     rawGpsAltitude: gpsAltRes.value,
 
     // IMU & Orientation fields
-    accelX: accelXRes.value,
-    accelY: accelYRes.value,
-    accelZ: accelZRes.value,
-    roll: rollRes.value,
-    pitch: pitchRes.value,
-    spinRate: spinRateRes.value,
-    gyroZRadps: spinRateRes.value,
+    accelX: accelXVal,
+    accelY: accelYVal,
+    accelZ: accelZVal,
+    acceleration: totalAccelVal,
+    roll: rollVal,
+    pitch: pitchVal,
+    yaw: yawVal,
+    spinRate: spinRateVal,
+    gyroZRadps: spinRateVal,
 
     // Flight software state
     stateCode,
@@ -887,8 +973,6 @@ export function parseTelemetryLine(
 
     // Absent telemetry fields explicitly set to null (never inferred or replaced with 0)
     velocity: null,
-    acceleration: null,
-    yaw: null,
     co2: null,
     pm2_5: null,
     uv: null,

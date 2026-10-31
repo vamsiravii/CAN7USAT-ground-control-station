@@ -472,16 +472,29 @@ export default function App() {
     });
   };
 
-  const handleSendCommand = (cmd: string) => {
-    // Strictly block command transmission or fake ACKs in LIVE_SERIAL mode
-    if (telemetrySource !== 'SIMULATION') {
-      addLog(
-        '[SECURITY] Command transmission blocked: Live Serial mode is strictly receive-only.',
-        'err',
-        'LIVE_SERIAL'
-      );
+  const handleSendCommand = async (cmd: string) => {
+    if (telemetrySource === 'LIVE_SERIAL') {
+      if (globalSerialTelemetry.getState() !== 'CONNECTED') {
+        addLog(
+          '[UPLINK_FAIL] Cannot transmit telecommand: USB serial port is disconnected.',
+          'err',
+          'LIVE_SERIAL'
+        );
+        return;
+      }
+      try {
+        await globalSerialTelemetry.sendCommand(cmd);
+        addLog(cmd, 'tx', 'LIVE_SERIAL');
+      } catch (err) {
+        addLog(
+          `[UPLINK_ERR] Failed to transmit telecommand: ${err instanceof Error ? err.message : String(err)}`,
+          'err',
+          'LIVE_SERIAL'
+        );
+      }
       return;
     }
+
     addLog(cmd, 'tx', 'SIMULATION');
     setSerialConfig((prev) => ({ ...prev, txCount: prev.txCount + 1 }));
     setTimeout(() => {

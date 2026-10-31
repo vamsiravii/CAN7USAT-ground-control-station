@@ -112,7 +112,7 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isSim || !inputCommand.trim()) return;
+    if (!inputCommand.trim()) return;
     onSendCommand(inputCommand.trim());
     setInputCommand('');
   };
@@ -339,7 +339,7 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
         )}
       </div>
 
-      {/* Command Input Form (Restricted to Simulation Mode) */}
+      {/* Command Input Form */}
       <form
         onSubmit={handleSend}
         className="flex flex-wrap sm:flex-nowrap items-center gap-2 px-3 py-2 bg-[var(--bg-surface-2)] border-t border-[var(--border-subtle)] shrink-0"
@@ -348,34 +348,33 @@ export const TerminalDrawer: React.FC<TerminalDrawerProps> = ({
           {isSim ? (
             <span>SIM_CMD&gt;</span>
           ) : (
-            <span className="flex items-center gap-1 text-[var(--text-tertiary)]">
-              <Lock className="w-3.5 h-3.5 text-[var(--status-alert)]" />
-              RX_ONLY&gt;
+            <span className="flex items-center gap-1 text-[var(--action-amber)]">
+              <Terminal className="w-3.5 h-3.5 text-[var(--action-amber)]" />
+              UPLINK&gt;
             </span>
           )}
         </div>
         <input
           type="text"
           value={inputCommand}
-          disabled={!isSim}
           onChange={(e) => setInputCommand(e.target.value)}
           placeholder={
             isSim
               ? 'Enter command for local simulator (e.g. CMD,2026-IN-SPACe-CAN-7USAT-017,CALIBRATE,1)'
-              : 'Hardware telecommand transmission is disabled in Live Serial receive-only mode'
+              : 'Enter hardware telecommand (e.g. START, STOP, TARE, STEER L 30, GPS:13.34,74.79)'
           }
-          className="flex-1 min-w-[200px] bg-[var(--bg-base)] border border-[var(--border-subtle)] focus:border-[var(--border-amber)] text-[var(--text-primary)] font-mono-data text-xs px-2.5 py-1.5 outline-none rounded-[var(--radius-sm)] disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex-1 min-w-[200px] bg-[var(--bg-base)] border border-[var(--border-subtle)] focus:border-[var(--border-amber)] text-[var(--text-primary)] font-mono-data text-xs px-2.5 py-1.5 outline-none rounded-[var(--radius-sm)]"
         />
         <span className="hidden lg:inline-block font-mono-data text-[9px] text-[var(--text-tertiary)] shrink-0">
-          {isSim ? 'LOCAL SIMULATOR ONLY (NO RF TX)' : 'SERIAL TX DISABLED'}
+          {isSim ? 'LOCAL SIMULATOR ONLY (NO RF TX)' : 'DIRECT USB SERIAL UPLINK'}
         </span>
         <button
           type="submit"
-          disabled={!isSim || !inputCommand.trim()}
+          disabled={!inputCommand.trim()}
           className="go-button font-mono-data text-xs font-bold px-3.5 py-1.5 uppercase cursor-pointer flex items-center gap-1.5 rounded-[var(--radius-sm)] disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
         >
           <Send className="w-3.5 h-3.5" />
-          <span>{isSim ? 'SEND (SIM)' : 'TX LOCKED'}</span>
+          <span>{isSim ? 'SEND (SIM)' : 'TRANSMIT'}</span>
         </button>
       </form>
     </div>

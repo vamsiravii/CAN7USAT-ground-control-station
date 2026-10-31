@@ -780,4 +780,53 @@ describe('flight-software-integrated/CAN7USAT_FSW.ino 32-Field v2 Continuous-Rot
   });
 });
 
+describe('Official IN-SPACe Competition 15-Field & 18-Field Telemetry Contract', () => {
+  it('parses standard 15-field IN-SPACe competition CSV with trailing comma', () => {
+    const line = '2026-IN-SPACe-CAN-7USAT-017,45,45,680.50,94520.25,21.40,8.15,07:15:30,13.3475100,74.7921200,685.20,8,9.81,0.0,DESCENT,';
+    const res = parseTelemetryLine(line);
+    assert.strictEqual(res.ok, true);
+    if (!res.ok) return;
+
+    const p = res.packet;
+    assert.strictEqual(p.packetFormat, 'COMPETITION_CSV_15');
+    assert.strictEqual(p.missionTimeSeconds, 45);
+    assert.strictEqual(p.packetNumber, 45);
+    assert.strictEqual(p.altitude, 680.5);
+    assert.strictEqual(p.rawPressurePa, 94520.25);
+    assert.strictEqual(p.temperature, 21.4);
+    assert.strictEqual(p.batteryVoltage, 8.15);
+    assert.strictEqual(p.timestampUtc, '07:15:30');
+    assert.strictEqual(p.latitude, 13.34751);
+    assert.strictEqual(p.longitude, 74.79212);
+    assert.strictEqual(p.acceleration, 9.81);
+    assert.strictEqual(p.wheelRpm, 0);
+    assert.strictEqual(p.fswStateName, 'DESCENT');
+    assert.strictEqual(p.stateCode, FlightStateCode.DESCENT);
+  });
+
+  it('parses 18-field extended CSV containing Pitch, Roll, and Yaw angles', () => {
+    const line = '017,50,50,520.00,96200.00,22.10,8.12,07:15:35,13.3476000,74.7922000,525.00,9,9.85,1200.0,AERODYNAMIC_STABILIZATION,-3.2,12.5,185.0,';
+    const res = parseTelemetryLine(line);
+    assert.strictEqual(res.ok, true);
+    if (!res.ok) return;
+
+    const p = res.packet;
+    assert.strictEqual(p.packetFormat, 'EXTENDED_CSV_18');
+    assert.strictEqual(p.teamId, '017');
+    assert.strictEqual(p.roll, -3.2);
+    assert.strictEqual(p.pitch, 12.5);
+    assert.strictEqual(p.yaw, 185.0);
+    assert.strictEqual(p.acceleration, 9.85);
+    assert.strictEqual(p.wheelRpm, 1200);
+    assert.strictEqual(p.fswStateName, 'AERODYNAMIC_STABILIZATION');
+  });
+
+  it('accepts both canonical teamId and short LoRa airtime teamId 017', () => {
+    const longLine = '2026-IN-SPACe-CAN-7USAT-017,1,1,10.0,101300.0,25.0,8.20,00:00:01,13.34,74.79,15.0,8,9.81,0,STANDBY';
+    const shortLine = '017,1,1,10.0,101300.0,25.0,8.20,00:00:01,13.34,74.79,15.0,8,9.81,0,STANDBY';
+    assert.strictEqual(parseTelemetryLine(longLine).ok, true);
+    assert.strictEqual(parseTelemetryLine(shortLine).ok, true);
+  });
+});
+
 
